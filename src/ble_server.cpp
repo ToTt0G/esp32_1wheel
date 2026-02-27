@@ -6,6 +6,7 @@
 
 #include "ble_server.h"
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 
 // ── Internal State ──────────────────────────────────────────
 
@@ -45,7 +46,12 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
             }
             case CMD_FLASH_CFG: {
                 Serial.println("[CMD] FLASH_CFG: Saving config to NVS...");
-                // TODO: save PID values to NVS/Preferences for persistence
+                Preferences prefs;
+                prefs.begin("onewheel", false);
+                prefs.putFloat("Kp", Kp);
+                prefs.putFloat("Ki", Ki);
+                prefs.putFloat("Kd", Kd);
+                prefs.end();
                 Serial.printf("  → Stored: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
                 break;
             }
@@ -78,6 +84,15 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 // ── Public API ──────────────────────────────────────────────
 
 void ble_init() {
+    // Load saved settings from NVS (defaults are provided by variables in main.cpp)
+    Preferences prefs;
+    prefs.begin("onewheel", true); // true = read-only
+    Kp = prefs.getFloat("Kp", Kp);
+    Ki = prefs.getFloat("Ki", Ki);
+    Kd = prefs.getFloat("Kd", Kd);
+    Serial.printf("[NVS] Loaded PID: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
+    prefs.end();
+
     // Initialize NimBLE
     NimBLEDevice::init("DIY_ONEWHEEL_ESP32");
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
