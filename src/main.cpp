@@ -23,11 +23,15 @@ float Kp = 60.0;
 float Ki = 0.5;
 float Kd = 2.0;
 float targetAngle = 0.0; // Level is 0 degrees
-bool  isArmed     = true; // BLE kill switch — disarmed = motor output forced to 0
+bool  isArmed     = false; // BLE kill switch — starts DISARMED for safety
 
 float integral = 0.0;
 float prevError = 0.0;
 unsigned long prevTime_PID = 0;
+
+// Thread-safe PID update buffer (written by BLE task, consumed by loop)
+volatile bool  pidUpdatePending = false;
+volatile float pendingKp, pendingKi, pendingKd;
 
 // Hoverboard Protocol Structs
 typedef struct{
@@ -65,7 +69,6 @@ float calculatePID(float currentAngle, float dt);
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) delay(10); 
 
   Serial.println("ESP32 Onewheel Initializing...");
 
@@ -91,6 +94,9 @@ void setup() {
 
   // Initialize BLE GATT server (must be after Serial)
   ble_init();
+
+  // Initialize PID timing to avoid garbage dt on first cycle
+  prevTime_PID = millis();
 }
 
 void loop() {
@@ -104,42 +110,63 @@ void loop() {
   if ((long)(timeNow - iTimeSend) >= 0) {
     iTimeSend = timeNow + TIME_SEND;
 
-    // 1. Read Velostat Footpad
-    // Connected to GND: Pressed = HIGH, Released = LOW
-    bool footpadPressed = (digitalRead(VELOSTAT_PIN) == HIGH); 
+    // 1. Read Velostat Footpad (100ms debounce for safety)
+    static bool stableFootpad = false;
+    static unsigned long footpadChangeTime = 0;
+    bool rawFootpad = (digitalRead(VELOSTAT_PIN) == HIGH);
+    if (rawFootpad != stableFootpad) {
+        if (footpadChangeTime == 0) footpadChangeTime = timeNow;
+        if (timeNow - footpadChangeTime > 100) {
+            stableFootpad = rawFootpad;
+            footpadChangeTime = 0;
+        }
+    } else {
+        footpadChangeTime = 0;
+    }
+    bool footpadPressed = stableFootpad;
 
-    // 2. Read MPU6050 
+    // 2. Time delta (before sensor fusion — needed by comp filter and PID)
+    float dt = (timeNow - prevTime_PID) / 1000.0;
+    if (dt <= 0) dt = 0.02;
+    prevTime_PID = timeNow;
+
+    // 3. Apply pending PID update from BLE (thread-safe handoff)
+    if (pidUpdatePending) {
+        Kp = pendingKp;
+        Ki = pendingKi;
+        Kd = pendingKd;
+        prevError = 0;
+        integral = 0;
+        pidUpdatePending = false;
+        Serial.printf("[PID] Applied: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
+    }
+
+    // 4. Read MPU6050 — complementary filter (accel + gyro fusion)
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
 
-    // Calculate pitch angle offset to match the previous logic
-    // Usually atan2 returns angle in radians, we convert to degrees.
-    float raw_pitch = atan2(a.acceleration.y, a.acceleration.z) * 180.0 / PI;
-    float pitch = raw_pitch + 180.0;
-    if (pitch > 180.0) pitch -= 360.0;
+    float accelPitch = atan2(a.acceleration.y, a.acceleration.z) * 180.0 / PI + 180.0;
+    if (accelPitch > 180.0) accelPitch -= 360.0;
 
-    // Time delta for PID calculation
-    float dt = (timeNow - prevTime_PID) / 1000.0;
-    if (dt <= 0) dt = 0.02; // Safeguard
-    prevTime_PID = timeNow;
+    static float pitch = 0;
+    float gyroRate = g.gyro.x * 180.0 / PI;  // deg/s from gyro
+    pitch = 0.98f * (pitch + gyroRate * dt) + 0.02f * accelPitch;
 
     int16_t uSpeed = 0;
     int16_t uSteer = 0;
 
     // Board safety limits (cutoff if fallen / flipped over 40 degrees)
-    bool isFallen = (abs(pitch) > 40.0);
+    bool isFallen = (fabs(pitch) > 40.0);
 
-    // 3. Compute Control Action
+    // 5. Compute Control Action
     if (footpadPressed && !isFallen && isArmed) {
-      // Get the requested motor speed based on current angle error
       float pidOutput = calculatePID(pitch, dt);
-
-      // Clip bounds
       uSpeed = (int16_t)constrain(pidOutput, -1000, 1000);
     } else {
       // E-Stop / Disengage / BLE kill switch
       uSpeed = 0;
-      integral = 0; // Clear windup memory when disengaged
+      integral = 0;
+      prevError = 0;  // prevent derivative spike on re-engage
     }
 
     // 4. Send to Hoverboard Motherboard
@@ -156,7 +183,7 @@ void loop() {
       if (footpadPressed) flags |= FLAG_FOOTPAD_LEFT | FLAG_FOOTPAD_RIGHT;
       if (isArmed)        flags |= FLAG_ARMED;
       if (Feedback.boardTemp > 600)  flags |= FLAG_OVER_TEMP;
-      if (batVolts < 50.0f)          flags |= FLAG_LOW_BATTERY;
+      if (batVolts > 1.0f && batVolts < 50.0f) flags |= FLAG_LOW_BATTERY;
 
       TelemetryPacket pkt;
       pkt.batteryVoltage = batVolts;
@@ -180,6 +207,10 @@ void loop() {
         pitch, uSpeed, Feedback.batVoltage);
     }
   }
+
+  // Yield to FreeRTOS — prevents CPU from spinning at 100% between
+  // control loop iterations, which causes significant overheating.
+  delay(1);
 }
 
 float calculatePID(float currentAngle, float dt) {
@@ -187,7 +218,7 @@ float calculatePID(float currentAngle, float dt) {
   integral += error * dt;
 
   // Anti-windup cap
-  integral = constrain(integral, -100.0, 100.0);
+  integral = constrain(integral, -25.0, 25.0);
 
   float derivative = (error - prevError) / dt;
   prevError = error;
@@ -206,33 +237,33 @@ void Send(int16_t uSteer, int16_t uSpeed) {
 }
 
 void Receive() {
-    if (Serial2.available()) {
+    // Drain ALL available bytes — at 115200 baud the buffer fills
+    // faster than the 1ms loop can process one-at-a-time.
+    while (Serial2.available()) {
         incomingByte = Serial2.read();
         bufStartFrame = ((uint16_t)(incomingByte) << 8) | incomingBytePrev;
-    } else {
-        return;
-    }
 
-    if (bufStartFrame == START_FRAME) {
-        p       = (byte *)&NewFeedback;
-        *p++    = incomingBytePrev;
-        *p++    = incomingByte;
-        idx     = 2;	
-    } else if (idx >= 2 && idx < sizeof(SerialFeedback)) {
-        *p++    = incomingByte; 
-        idx++;
-    }	
-    
-    // Valid frame received?
-    if (idx == sizeof(SerialFeedback)) {
-        uint16_t checksum = (uint16_t)(NewFeedback.start ^ NewFeedback.cmd1 ^ NewFeedback.cmd2 ^ NewFeedback.speedR_meas ^ NewFeedback.speedL_meas
-                            ^ NewFeedback.batVoltage ^ NewFeedback.boardTemp ^ NewFeedback.cmdLed);
-
-        if (NewFeedback.start == START_FRAME && checksum == NewFeedback.checksum) {
-            memcpy(&Feedback, &NewFeedback, sizeof(SerialFeedback));
+        if (bufStartFrame == START_FRAME) {
+            p       = (byte *)&NewFeedback;
+            *p++    = incomingBytePrev;
+            *p++    = incomingByte;
+            idx     = 2;
+        } else if (idx >= 2 && idx < sizeof(SerialFeedback)) {
+            *p++    = incomingByte;
+            idx++;
         }
-        idx = 0;
-    }
 
-    incomingBytePrev = incomingByte;
+        // Valid frame received?
+        if (idx == sizeof(SerialFeedback)) {
+            uint16_t checksum = (uint16_t)(NewFeedback.start ^ NewFeedback.cmd1 ^ NewFeedback.cmd2 ^ NewFeedback.speedR_meas ^ NewFeedback.speedL_meas
+                                ^ NewFeedback.batVoltage ^ NewFeedback.boardTemp ^ NewFeedback.cmdLed);
+
+            if (NewFeedback.start == START_FRAME && checksum == NewFeedback.checksum) {
+                memcpy(&Feedback, &NewFeedback, sizeof(SerialFeedback));
+            }
+            idx = 0;
+        }
+
+        incomingBytePrev = incomingByte;
+    }
 }

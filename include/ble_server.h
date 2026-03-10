@@ -52,6 +52,10 @@ static_assert(sizeof(TelemetryPacket) == 20, "Telemetry packet must be exactly 2
 extern float Kp, Ki, Kd;
 extern bool  isArmed;
 
+// Thread-safe PID update buffer (BLE task → loop task)
+extern volatile bool  pidUpdatePending;
+extern volatile float pendingKp, pendingKi, pendingKd;
+
 // ── Public API ──────────────────────────────────────────────
 
 /** Initialize NimBLE, create GATT service, start advertising */

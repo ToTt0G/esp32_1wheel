@@ -32,10 +32,15 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
                     Serial.println("[CMD] SET_PID: invalid payload length");
                     break;
                 }
-                memcpy(&Kp, data + 1, 4);
-                memcpy(&Ki, data + 5, 4);
-                memcpy(&Kd, data + 9, 4);
-                Serial.printf("[CMD] SET_PID: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
+                float kp, ki, kd;
+                memcpy(&kp, data + 1, 4);
+                memcpy(&ki, data + 5, 4);
+                memcpy(&kd, data + 9, 4);
+                pendingKp = kp;
+                pendingKi = ki;
+                pendingKd = kd;
+                pidUpdatePending = true;
+                Serial.printf("[CMD] SET_PID (queued): Kp=%.2f Ki=%.2f Kd=%.2f\n", kp, ki, kd);
                 break;
             }
             case CMD_ARM: {
