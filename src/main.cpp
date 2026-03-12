@@ -4,7 +4,7 @@
 #include <Adafruit_Sensor.h>
 #include "ble_server.h"
 
-#define VELOSTAT_PIN 21
+#define VELOSTAT_PIN 32 // Pin 21 does NOT support ADC. Use 32 or 33 instead.
 #define MPU_SCL 22
 #define MPU_SDA 23
 
@@ -61,13 +61,13 @@ const float twoKpDef = (2.0f * 0.4f);  // 2 * proportional gain
 const float twoKiDef = (2.0f * 0.0f);  // 2 * integral gain
 
 // Hoverboard Protocol Structs
+#pragma pack(push, 1)
 typedef struct{
    uint16_t start;
    int16_t  steer;
    int16_t  speed;
    uint16_t checksum;
 } SerialCommand;
-SerialCommand Command;
 
 typedef struct{
    uint16_t start;
@@ -80,6 +80,9 @@ typedef struct{
    uint16_t cmdLed;
    uint16_t checksum;
 } SerialFeedback;
+#pragma pack(pop)
+
+SerialCommand Command;
 SerialFeedback Feedback;
 SerialFeedback NewFeedback;
 
@@ -182,10 +185,10 @@ void loop() {
 
       // 2. Read MPU6050 & Run Mahony Filter
       sensors_event_t a, g, temp;
-      mpu.getEvent(&a, &g, &temp);
-
-      // MPU6050 readings in standard format for Mahony (rad/s and m/s^2)
-      MahonyAHRSupdateIMU(g.gyro.x, g.gyro.y, g.gyro.z, a.acceleration.x, a.acceleration.y, a.acceleration.z, dt);
+      if (mpu.getEvent(&a, &g, &temp)) {
+          // MPU6050 readings in standard format for Mahony (rad/s and m/s^2)
+          MahonyAHRSupdateIMU(g.gyro.x, g.gyro.y, g.gyro.z, a.acceleration.x, a.acceleration.y, a.acceleration.z, dt);
+      }
 
       // Convert Quaternions to Euler Angles
       // Physical Board Pitch is rotation around the MPU's X axis
@@ -208,7 +211,7 @@ void loop() {
 
       // 3. Board Safety Limits (Fallen & Roll Tolerance)
       bool isFallen = (fabs(currentPitch) > 40.0) || (fabs(currentRoll) > 40.0);
-      bool isLevelForStart = (fabs(currentRoll) < 15.0); // Must be relatively level to start
+      bool isLevelForStart = (fabs(currentRoll) < 15.0) && (fabs(currentPitch) < 15.0); // Must be relatively level to start
       
       // 4. Fault Delay Logic (Dirty Landings)
       static bool isBalancing = false;
@@ -270,7 +273,7 @@ void loop() {
         // E-Stop / Disengage
         uSpeed = 0;
         integral = 0;
-        prevError = 0;  // prevent derivative spike on re-engage
+        prevError = targetAngle - currentPitch;  // prevent derivative spike on re-engage
       }
   }
 
@@ -285,7 +288,7 @@ void loop() {
         Ki = pendingKi;
         Kd = pendingKd;
         footpadThreshold = pendingFootpadThreshold;
-        prevError = 0;
+        prevError = targetAngle - currentPitch;
         integral = 0;
         pidUpdatePending = false;
         Serial.printf("[PID] Applied: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", Kp, Ki, Kd, footpadThreshold);
