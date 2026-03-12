@@ -31,7 +31,7 @@
 #define FLAG_LOW_BATTERY    (1 << 5)
 #define FLAG_CHARGING       (1 << 6)
 
-// ── Telemetry Packet (20 bytes, little-endian, packed) ──────
+// ── Telemetry Packet (24 bytes, little-endian, packed) ──────
 
 #pragma pack(push, 1)
 struct TelemetryPacket {
@@ -42,19 +42,21 @@ struct TelemetryPacket {
     int16_t  motorCurrentL;    // offset 14
     int16_t  motorCurrentR;    // offset 16
     uint16_t statusFlags;      // offset 18
+    int16_t  footpadAdc;       // offset 20
+    int16_t  footpadThreshold; // offset 22
 };
 #pragma pack(pop)
 
-static_assert(sizeof(TelemetryPacket) == 20, "Telemetry packet must be exactly 20 bytes");
+static_assert(sizeof(TelemetryPacket) == 24, "Telemetry packet must be exactly 24 bytes");
 
 // ── Shared State (owned by main.cpp, written by BLE callbacks) ──
 
-extern float Kp, Ki, Kd;
+extern float Kp, Ki, Kd, footpadThreshold;
 extern bool  isArmed;
 
 // Thread-safe PID update buffer (BLE task → loop task)
 extern volatile bool  pidUpdatePending;
-extern volatile float pendingKp, pendingKi, pendingKd;
+extern volatile float pendingKp, pendingKi, pendingKd, pendingFootpadThreshold;
 
 // ── Public API ──────────────────────────────────────────────
 

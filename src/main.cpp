@@ -10,8 +10,9 @@
 
 // Hoverboard UART Config
 #define HOVER_SERIAL_BAUD   115200 
+#define START_FRAME         0xABCD
 #define TIME_SEND           10 // 10ms (100Hz) to hoverboard
-#define TIME_CONTROL_LOOP   2  // 2ms (500Hz) balancing loop
+#define TIME_CONTROL_LOOP   5  // 5ms (200Hz) balancing loop
 #define HOVER_RX_PIN        16
 #define HOVER_TX_PIN        17
 
@@ -40,6 +41,7 @@ unsigned long footpadTimerStart = 0;
 float Kp = 60.0;
 float Ki = 0.5;
 float Kd = 2.0;
+float footpadThreshold = 2000.0;
 float integral = 0.0;
 float prevError = 0.0;
 unsigned long prevTime_PID = 0;
@@ -50,7 +52,7 @@ const float DERIVATIVE_ALPHA = 0.3; // Low-pass filter weight (0.0 to 1.0, lower
 
 // Thread-safe PID update buffer (written by BLE task, consumed by loop)
 volatile bool  pidUpdatePending = false;
-volatile float pendingKp, pendingKi, pendingKd;
+volatile float pendingKp, pendingKi, pendingKd, pendingFootpadThreshold;
 
 // Mahony filter variables
 float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; 
@@ -93,6 +95,7 @@ float currentRoll = 0;
 int16_t uSpeed = 0;
 int16_t uSteer = 0;
 float speedKmh = 0;
+uint16_t footpadAdc = 4095;
 bool footpadPressed = false;
 bool footpadLeft = false;
 bool footpadRight = false;
@@ -158,7 +161,8 @@ void loop() {
       // 1. Read Velostat Footpad (Debounced & Virtual Dual-Zone)
       static bool stableFootpad = false;
       static unsigned long footpadChangeTime = 0;
-      bool rawFootpad = (digitalRead(VELOSTAT_PIN) == LOW);
+      footpadAdc = analogRead(VELOSTAT_PIN);
+      bool rawFootpad = (footpadAdc < footpadThreshold);
       
       // Debounce logic (50ms)
       if (rawFootpad != stableFootpad) {
@@ -280,10 +284,11 @@ void loop() {
         Kp = pendingKp;
         Ki = pendingKi;
         Kd = pendingKd;
+        footpadThreshold = pendingFootpadThreshold;
         prevError = 0;
         integral = 0;
         pidUpdatePending = false;
-        Serial.printf("[PID] Applied: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
+        Serial.printf("[PID] Applied: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", Kp, Ki, Kd, footpadThreshold);
     }
 
     // 1. Send to Hoverboard Motherboard
@@ -312,6 +317,8 @@ void loop() {
       pkt.motorCurrentL  = Feedback.cmd1;
       pkt.motorCurrentR  = Feedback.cmd2;
       pkt.statusFlags    = flags;
+      pkt.footpadAdc     = footpadAdc;
+      pkt.footpadThreshold = (int16_t)footpadThreshold;
 
       ble_sendTelemetry(pkt);
     }
@@ -337,8 +344,6 @@ void loop() {
     }
   }
 
-  // Yield to FreeRTOS
-  delay(1);
 }
 
 float calculatePID(float currentAngle, float target, float dt) {
@@ -443,10 +448,8 @@ void Send(int16_t uSteer, int16_t uSpeed) {
   Command.speed    = (int16_t)uSpeed;
   Command.checksum = (uint16_t)(Command.start ^ Command.steer ^ Command.speed);
 
-  // Send the entire 8-byte frame in one burst and flush to ensure 
-  // we do not trigger the Hoverboard's Idle Line Detection mid-frame
+  // Send the entire 8-byte frame in one burst. Hardware FIFO prevents mid-frame gaps.
   Serial2.write((uint8_t *) &Command, sizeof(Command)); 
-  Serial2.flush();
 }
 
 void Receive() {
@@ -454,7 +457,7 @@ void Receive() {
         incomingByte = Serial2.read();
         bufStartFrame = ((uint16_t)(incomingByte) << 8) | incomingBytePrev;
 
-        if (bufStartFrame == START_FRAME) {
+        if (idx == 0 && bufStartFrame == START_FRAME) {
             p       = (byte *)&NewFeedback;
             *p++    = incomingBytePrev;
             *p++    = incomingByte;

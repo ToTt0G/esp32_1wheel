@@ -28,19 +28,21 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
 
         switch (cmdId) {
             case CMD_SET_PID: {
-                if (len < 13) {
+                if (len < 17) {
                     Serial.println("[CMD] SET_PID: invalid payload length");
                     break;
                 }
-                float kp, ki, kd;
+                float kp, ki, kd, fp;
                 memcpy(&kp, data + 1, 4);
                 memcpy(&ki, data + 5, 4);
                 memcpy(&kd, data + 9, 4);
+                memcpy(&fp, data + 13, 4);
                 pendingKp = kp;
                 pendingKi = ki;
                 pendingKd = kd;
+                pendingFootpadThreshold = fp;
                 pidUpdatePending = true;
-                Serial.printf("[CMD] SET_PID (queued): Kp=%.2f Ki=%.2f Kd=%.2f\n", kp, ki, kd);
+                Serial.printf("[CMD] SET_PID (queued): Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", kp, ki, kd, fp);
                 break;
             }
             case CMD_ARM: {
@@ -56,8 +58,9 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
                 prefs.putFloat("Kp", Kp);
                 prefs.putFloat("Ki", Ki);
                 prefs.putFloat("Kd", Kd);
+                prefs.putFloat("fpThr", footpadThreshold);
                 prefs.end();
-                Serial.printf("  → Stored: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
+                Serial.printf("  → Stored: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", Kp, Ki, Kd, footpadThreshold);
                 break;
             }
             case CMD_REBOOT: {
@@ -95,7 +98,8 @@ void ble_init() {
     Kp = prefs.getFloat("Kp", Kp);
     Ki = prefs.getFloat("Ki", Ki);
     Kd = prefs.getFloat("Kd", Kd);
-    Serial.printf("[NVS] Loaded PID: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
+    footpadThreshold = prefs.getFloat("fpThr", footpadThreshold);
+    Serial.printf("[NVS] Loaded PID+Thr: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", Kp, Ki, Kd, footpadThreshold);
     prefs.end();
 
     // Initialize NimBLE
