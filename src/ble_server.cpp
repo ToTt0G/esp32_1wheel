@@ -146,6 +146,7 @@ void ble_init() {
 
 void ble_sendTelemetry(const TelemetryPacket& pkt) {
     if (!pTelemetryChar) return;
+    if (!pServer || pServer->getConnectedCount() == 0) return;  // skip if nobody listening
     pTelemetryChar->setValue((uint8_t*)&pkt, sizeof(pkt));
     pTelemetryChar->notify();
 }
