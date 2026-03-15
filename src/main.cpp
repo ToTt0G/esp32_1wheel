@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
+#include <Preferences.h>
 #include "ble_server.h"
 
 #define VELOSTAT_PIN 32 // Pin 21 does NOT support ADC. Use 32 or 33 instead.
@@ -25,7 +26,7 @@ Adafruit_MPU6050 mpu;
 
 // Ride parameters
 float targetAngle = 0.0; // Level is 0 degrees
-bool  isArmed     = true; // BLE kill switch — starts ARMED by default
+bool  isArmed     = false; // Safety: Start DISARMED, will be armed after 3s warmup
 
 // Pushback Config
 const float PUSHBACK_MAX_SPEED_KMH = 20.0;      // Speed at which max pushback occurs
@@ -41,10 +42,12 @@ unsigned long footpadTimerStart = 0;
 float Kp = 60.0;
 float Ki = 0.5;
 float Kd = 2.0;
-float footpadThreshold = 2000.0;
+float footpadThreshold = 10.0;
 float integral = 0.0;
 float prevError = 0.0;
 unsigned long prevTime_PID = 0;
+float pitchOffset = 0.0f;
+volatile bool calibratePending = false;
 
 // PT1 Filter state for Kd
 float prevDerivative = 0.0;
@@ -140,6 +143,14 @@ void setup() {
 
   // Initialize PID timing to avoid garbage dt on first cycle
   prevTime_PID = millis();
+
+  // Sanity-check NVS-loaded footpad threshold
+  if (footpadThreshold < 1.0 || footpadThreshold > 100.0) {
+      Serial.printf("[WARN] Footpad threshold %.1f out of range, resetting to 10.0\n", footpadThreshold);
+      footpadThreshold = 10.0;
+  }
+
+  Serial.println("[SYSTEM] Warmup starting (3 seconds)...");
 }
 
 void loop() {
@@ -147,9 +158,34 @@ void loop() {
   unsigned long timeNowMicros = micros();
   static unsigned long iTimeSend = 0;
   static unsigned long iTimeControl = 0;
+  static bool warmupComplete = false;
   
   // Process incoming hoverboard telemetry (run frequently)
   Receive();
+
+  // ── Safety Startup Delay ── Skip ALL control & motor output during warmup
+  if (!warmupComplete) {
+      // Pulse LED during warmup
+      digitalWrite(LED_BUILTIN, (timeNow / 200) % 2);
+
+      // Diagnostic output during warmup (~2Hz)
+      static unsigned long lastWarmupLog = 0;
+      if (timeNow - lastWarmupLog > 500) {
+          lastWarmupLog = timeNow;
+          Serial.printf("[WARMUP] t:%lu P:%.1f° Foot:%d Thr:%.0f\n",
+                        timeNow, currentPitch, analogRead(VELOSTAT_PIN), footpadThreshold);
+      }
+
+      if (timeNow > 3000) {
+          warmupComplete = true;
+          isArmed = true;
+          digitalWrite(LED_BUILTIN, HIGH);
+          Serial.printf("[SYSTEM] Warmup done. Board ARMED. FP threshold=%.0f\n", footpadThreshold);
+      }
+
+      Send(0, 0);  // Keep sending zero so hoverboard doesn't timeout
+      return;      // ← Skip entire control loop + PID + motor output
+  }
 
   // Primary High-Speed Control Loop (500Hz)
   if ((long)(timeNow - iTimeControl) >= 0) {
@@ -192,7 +228,8 @@ void loop() {
 
       // Convert Quaternions to Euler Angles
       // Physical Board Pitch is rotation around the MPU's X axis
-      currentPitch = atan2(2.0f * (q0 * q1 + q2 * q3), q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * 180.0f / PI;
+      float rawPitch = atan2(2.0f * (q0 * q1 + q2 * q3), q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * 180.0f / PI;
+      currentPitch = rawPitch - pitchOffset;
       // Physical Board Roll is rotation around the MPU's Y axis
       currentRoll  = -asin(2.0f * (q0 * q2 - q3 * q1)) * 180.0f / PI;
       float yaw    = atan2(2.0f * (q0 * q3 + q1 * q2), q0 * q0 + q1 * q1 - q2 * q2 - q3 * q3) * 180.0f / PI;
@@ -268,7 +305,7 @@ void loop() {
       // 6. Compute Control Action
       if (isBalancing) {
         float pidOutput = calculatePID(currentPitch, targetAngle, dt);
-        uSpeed = (int16_t)constrain(pidOutput, -1000, 1000);
+        uSpeed = (int16_t)constrain(-pidOutput, -1000, 1000);
       } else {
         // E-Stop / Disengage
         uSpeed = 0;
@@ -284,6 +321,7 @@ void loop() {
 
     // Apply pending PID update from BLE
     if (pidUpdatePending) {
+        float oldThr = footpadThreshold;
         Kp = pendingKp;
         Ki = pendingKi;
         Kd = pendingKd;
@@ -291,7 +329,34 @@ void loop() {
         prevError = targetAngle - currentPitch;
         integral = 0;
         pidUpdatePending = false;
-        Serial.printf("[PID] Applied: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", Kp, Ki, Kd, footpadThreshold);
+        Serial.printf("[PID] Applied: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.1f\n", Kp, Ki, Kd, footpadThreshold);
+
+        // Auto-save threshold to NVS if it changed
+        if (fabs(footpadThreshold - oldThr) > 0.01f) {
+            Preferences prefs;
+            prefs.begin("onewheel", false);
+            prefs.putFloat("fpThr", footpadThreshold);
+            prefs.end();
+            Serial.printf("[NVS] Footpad threshold auto-saved: %.1f\n", footpadThreshold);
+        }
+    }
+
+    // Handle tilt sensor calibration
+    if (calibratePending) {
+        // We want currentPitch to become 0.0, so new offset = current raw pitch
+        // currentPitch is already (rawPitch - oldOffset), so rawPitch = currentPitch + oldOffset
+        pitchOffset = currentPitch + pitchOffset;
+        calibratePending = false;
+        
+        // Trigger NVS save (reusing existing CommandId for logic, but we'll add it to ble_server.cpp)
+        Serial.printf("[CAL] New pitch offset: %.2f (Current pitch is now 0.0)\n", pitchOffset);
+        
+        // Force a save to NVS immediately
+        Preferences prefs;
+        prefs.begin("onewheel", false);
+        prefs.putFloat("pOff", pitchOffset);
+        prefs.end();
+        Serial.println("[CAL] Offset saved to NVS.");
     }
 
     // 1. Send to Hoverboard Motherboard

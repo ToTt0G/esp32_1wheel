@@ -42,7 +42,7 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
                 pendingKd = kd;
                 pendingFootpadThreshold = fp;
                 pidUpdatePending = true;
-                Serial.printf("[CMD] SET_PID (queued): Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", kp, ki, kd, fp);
+                Serial.printf("[CMD] SET_PID (queued): Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.1f\n", kp, ki, kd, fp);
                 break;
             }
             case CMD_ARM: {
@@ -59,8 +59,14 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
                 prefs.putFloat("Ki", Ki);
                 prefs.putFloat("Kd", Kd);
                 prefs.putFloat("fpThr", footpadThreshold);
+                prefs.putFloat("pOff", pitchOffset);
                 prefs.end();
-                Serial.printf("  → Stored: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", Kp, Ki, Kd, footpadThreshold);
+                Serial.printf("  → Stored: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.1f Offset=%.1f\n", Kp, Ki, Kd, footpadThreshold, pitchOffset);
+                break;
+            }
+            case CMD_CALIBRATE: {
+                calibratePending = true;
+                Serial.println("[CMD] CALIBRATE: Zeroing pitch sensor requested");
                 break;
             }
             case CMD_REBOOT: {
@@ -99,7 +105,8 @@ void ble_init() {
     Ki = prefs.getFloat("Ki", Ki);
     Kd = prefs.getFloat("Kd", Kd);
     footpadThreshold = prefs.getFloat("fpThr", footpadThreshold);
-    Serial.printf("[NVS] Loaded PID+Thr: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.0f\n", Kp, Ki, Kd, footpadThreshold);
+    pitchOffset = prefs.getFloat("pOff", pitchOffset);
+    Serial.printf("[NVS] Loaded PID+Thr+Off: Kp=%.2f Ki=%.2f Kd=%.2f Thr=%.1f Off=%.1f\n", Kp, Ki, Kd, footpadThreshold, pitchOffset);
     prefs.end();
 
     // Initialize NimBLE

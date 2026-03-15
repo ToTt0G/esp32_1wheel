@@ -20,6 +20,7 @@
 #define CMD_ARM       0x02
 #define CMD_FLASH_CFG 0x03
 #define CMD_REBOOT    0x04
+#define CMD_CALIBRATE 0x05
 
 // ── Status Flags (bitmask) ──────────────────────────────────
 
@@ -51,11 +52,11 @@ static_assert(sizeof(TelemetryPacket) == 24, "Telemetry packet must be exactly 2
 
 // ── Shared State (owned by main.cpp, written by BLE callbacks) ──
 
-extern float Kp, Ki, Kd, footpadThreshold;
+extern float Kp, Ki, Kd, footpadThreshold, pitchOffset;
 extern bool  isArmed;
 
 // Thread-safe PID update buffer (BLE task → loop task)
-extern volatile bool  pidUpdatePending;
+extern volatile bool  pidUpdatePending, calibratePending;
 extern volatile float pendingKp, pendingKi, pendingKd, pendingFootpadThreshold;
 
 // ── Public API ──────────────────────────────────────────────
