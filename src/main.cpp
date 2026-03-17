@@ -39,9 +39,9 @@ const float FAULT_MIN_SPEED_KMH = 2.0;
 unsigned long footpadTimerStart = 0;
 
 // PID Configuration
-float Kp = 60.0;
+float Kp = 30.0;
 float Ki = 0.5;
-float Kd = 2.0;
+float Kd = 0.5;
 float footpadThreshold = 10.0;
 float integral = 0.0;
 float prevError = 0.0;

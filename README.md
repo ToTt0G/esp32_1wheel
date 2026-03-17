@@ -6,19 +6,20 @@ PlatformIO-based firmware for a custom ESP32-powered Onewheel. Uses an MPU6050 I
 
 | Feature | Description |
 |---------|-------------|
-| **PID Balancing** | Real-time self-balancing using MPU6050 pitch angle |
+| **PID Balancing** | Real-time balancing at 500Hz with PT1 D-term filter |
+| **Mahony AHRS** | Robust and drift-free IMU orientation tracking |
 | **Hoverboard UART** | Sends speed commands and reads feedback via Serial2 |
-| **BLE Telemetry** | Streams voltage, speed, pitch, temperature at ~50 Hz |
-| **Remote PID Tuning** | Receive Kp/Ki/Kd values over BLE from the PWA |
-| **Remote ARM/Disarm** | Software kill switch toggled from the PWA |
-| **Safety Cutoffs** | Auto-disengage on >40° tilt or footpad release |
+| **BLE Telemetry** | Streams voltage, speed, pitch, temp to companion web app |
+| **Persistent Tuning** | Footpad thresholds & tilt calibration saved to NVS |
+| **Safety / Pushback** | Auto-disengage on tilt >40°, dynamic pushback >15km/h |
+| **Dirty Landings** | 500ms timeout on footpad release above 2km/h |
 
 ## Hardware
 
 | Component | Pin(s) | Notes |
 |-----------|--------|-------|
 | MPU6050 IMU | SDA=23, SCL=22 | I²C — pitch angle for PID |
-| Velostat Footpad | GPIO 21 | Pulled up — HIGH when pressed |
+| Velostat Footpad | GPIO 32 | ADC Input — threshold-based |
 | Hoverboard Controller | TX=17, RX=16 | UART @ 115200 baud (Serial2) |
 | Onboard LED | LED_BUILTIN | Status indicator |
 
@@ -78,11 +79,11 @@ The firmware implements a custom GATT server that the companion PWA connects to:
 
 | Characteristic | UUID | Direction | Description |
 |---------------|------|-----------|-------------|
-| Telemetry | `...454c4d000000` | ESP32 → PWA (Notify) | 20-byte binary packet |
-| Control | `...54524c000000` | PWA → ESP32 (Write) | PID, ARM, FLASH, REBOOT |
+| Telemetry | `...454c4d000000` | ESP32 → PWA (Notify) | 24-byte binary packet |
+| Control | `...54524c000000` | PWA → ESP32 (Write) | PID, ARM, FLASH, REBOOT, CALIBRATE |
 | Device Info | `...4e464f000000` | ESP32 → PWA (Read) | JSON device metadata |
 
-### Telemetry Packet (20 bytes, little-endian)
+### Telemetry Packet (24 bytes, little-endian, packed)
 
 | Offset | Type | Field |
 |--------|------|-------|
@@ -93,6 +94,8 @@ The firmware implements a custom GATT server that the companion PWA connects to:
 | 14 | int16 | Motor current L |
 | 16 | int16 | Motor current R |
 | 18 | uint16 | Status flags (bitmask) |
+| 20 | int16 | Footpad ADC value |
+| 22 | int16 | Footpad threshold |
 
 ### Control Commands
 
@@ -102,9 +105,10 @@ The firmware implements a custom GATT server that the companion PWA connects to:
 | `0x02` | ARM | `[0\|1: u8]` (2 bytes) |
 | `0x03` | FLASH_CFG | None (1 byte) |
 | `0x04` | REBOOT | None (1 byte) |
+| `0x05` | CALIBRATE | `[Offset: f32]` (5 bytes, or 1 byte if auto-zeroing) |
 
 ## PID Tuning
 
-Default values: `Kp=60.0, Ki=0.5, Kd=2.0`. These can be overridden at runtime via BLE from the PWA. The `FLASH_CFG` command is stubbed — implement NVS/Preferences writes to persist across reboots.
+Default values: `Kp=30.0, Ki=0.5, Kd=0.5` (Optimized for dual-motor torque). Parameters like footpad thresholds and tilt calibration offsets can be modified at runtime via BLE from the PWA and are automatically saved to non-volatile storage (NVS) to persist across reboots.
 
 > **⚠️ Warning:** PID tuning on a balancing vehicle is safety-critical. Always test with the board secured/elevated before riding.
