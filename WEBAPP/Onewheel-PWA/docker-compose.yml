@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: build
+      target: base
     # LIVE SYNC (Edit on laptop, updates in container)
     volumes:
       - ./:/app

@@ -1,5 +1,5 @@
 # Use Bun for build speed
-FROM oven/bun:1 AS build
+FROM oven/bun:1 AS base
 WORKDIR /app
 
 # Install dependencies first (cache layer)
@@ -9,6 +9,8 @@ RUN bun install --frozen-lockfile
 # Copy application code
 COPY . .
 
+# ── Build stage ──
+FROM base AS build
 # Build the PWA static files
 RUN bun run build
 
