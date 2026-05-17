@@ -1,0 +1,39 @@
+# Dependencies
+node_modules
+bun.lock
+
+# Build output
+dist
+
+# Version control
+.git
+.gitignore
+
+# IDE / Editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Docker files (don't copy into image)
+docker-compose.yml
+docker-compose.prod.yml
+Dockerfile
+.dockerignore
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Documentation
+README.md
+LICENSE
+
+# Agent / AI tooling
+.agents
+.gemini
+skills-lock.json
+
+# ESP32 reference firmware (not needed in web image)
+esp32-reference

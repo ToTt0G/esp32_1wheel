@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Background base: Rugged dark olive -->
+  <rect width="512" height="512" fill="#1c2317"/>
+  
+  <!-- Everything scaled down to 80% to fit in the maskable safe zone (409px) -->
+  <g transform="translate(51, 51) scale(0.8)">
+    <!-- Outer metallic/stencil border -->
+    <rect x="32" y="32" width="448" height="448" rx="48" stroke="#3b4731" stroke-width="12" stroke-dasharray="40 20"/>
+    
+    <!-- Corner precision accents -->
+    <path d="M 64 64 L 112 64 M 64 64 L 64 112" stroke="#ff6b00" stroke-width="8" stroke-linecap="square"/>
+    <path d="M 448 64 L 400 64 M 448 64 L 448 112" stroke="#ff6b00" stroke-width="8" stroke-linecap="square"/>
+    <path d="M 64 448 L 112 448 M 64 448 L 64 400" stroke="#ff6b00" stroke-width="8" stroke-linecap="square"/>
+    <path d="M 448 448 L 400 448 M 448 448 L 448 400" stroke="#ff6b00" stroke-width="8" stroke-linecap="square"/>
+    
+    <g transform="translate(0, 15)">
+        <!-- The Wheel (Onewheel signature) - Shrunk from r=140 to 120 -->
+        <circle cx="256" cy="256" r="115" fill="#11160e" stroke="#869f6a" stroke-width="14"/>
+        
+        <!-- Inner Rim & Hub -->
+        <circle cx="256" cy="256" r="64" fill="#2d3826" stroke="#3b4731" stroke-width="8"/>
+        <circle cx="256" cy="256" r="24" fill="#11160e"/>
+        
+        <!-- Tire Treads / Knobbies (Recalculated for r=115) -->
+        <g stroke="#869f6a" stroke-width="12" stroke-linecap="round">
+            <!-- Top / Bottom / Left / Right -->
+            <path d="M 256 126 L 256 136" />
+            <path d="M 256 386 L 256 376" />
+            <path d="M 126 256 L 136 256" />
+            <path d="M 386 256 L 376 256" />
+            
+            <!-- Diagonals -->
+            <path d="M 164 164 L 171 171" />
+            <path d="M 348 348 L 341 341" />
+            <path d="M 164 348 L 171 341" />
+            <path d="M 348 164 L 341 171" />
+        </g>
+    </g>
+
+    <!-- The Float Rails (Iconic parallel lines) - Tilted forward -->
+    <g transform="rotate(8, 256, 271)">
+      <rect x="76" y="255" width="360" height="32" rx="8" fill="#ff6b00"/>
+    </g>
+    
+    <!-- Small Target Crosshair in Center -->
+    <path d="M 256 259 L 256 283 M 244 271 L 268 271" stroke="#ff6b00" stroke-width="4"/>
+  </g>
+</svg>

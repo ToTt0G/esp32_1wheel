@@ -1,0 +1,12 @@
+# docker-compose.prod.yml (Production - Server)
+services:
+  app:
+    build:
+      context: .
+      # Uses COPY to bake code into image (immutable build)
+    # REQUIRED: Auto-restart unless manually stopped
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      - NODE_ENV=production

@@ -1,0 +1,17 @@
+# docker-compose.yml (Development - Laptop)
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    # LIVE SYNC (Edit on laptop, updates in container)
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+    # Vite dev server exposed to host network
+    command: bun run dev --host 0.0.0.0
